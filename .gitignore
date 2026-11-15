@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+dist/
+
+# Datos y modelos (no se suben)
+data/
+*.joblib
+*.pkl
+*.parquet
+*.csv
+!tests/fixtures/*.csv
+
+# Secretos
+.env
+.env.*
+!.env.example
+
+# Word abierto y sistema
+~$*.docx
+.DS_Store
+Thumbs.db
