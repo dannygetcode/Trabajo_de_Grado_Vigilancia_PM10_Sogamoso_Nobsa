@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/pruebas.setup.ts","./src/vite-env.d.ts","./src/componentes/estadoservicio.test.tsx","./src/componentes/estadoservicio.tsx","./src/salud/consultar.test.ts","./src/salud/consultar.ts","./src/salud/usesalud.ts","./vite.config.ts"],"version":"5.8.3"}
