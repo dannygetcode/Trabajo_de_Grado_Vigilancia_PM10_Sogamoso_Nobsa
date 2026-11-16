@@ -31,7 +31,7 @@ Entregable según la Tabla 5: perfil de calidad de los datos, backlog priorizado
 - [ ] Crear los Issues en GitHub a partir de `docs/backlog.md`. No se hizo: `gh` no está instalado en este equipo. Con `gh` instalado y autenticado se generan desde el backlog (un Issue por historia, etiqueta por sprint).
 - [ ] (Opus) Ejecutar `docs/planes/sprint-0-construccion.md` en la rama `sprint-0/estructura`:
   - [x] 1. Árbol y workspace de uv: nueve paquetes (`svca-comun`, `-reloj`, `-ingesta`, `-normativo`, `-notificaciones`, `-planificador`, `-pronostico`, `-simulador`, `-nucleo`), backend `uv_build`, `uv.lock` en la raíz, `.python-version` 3.13 y `.gitattributes` con fin de línea LF.
-  - [ ] 2. Calidad: ruff, mypy, import-linter, pytest; README reescrito.
+  - [x] 2. Calidad en `pyproject.toml` raíz: ruff con `TID251` (hora del sistema prohibida, probada en `tests/arquitectura/test_hora_prohibida.py`), mypy estricto en `domain/` y `application/`, import-linter con cinco contratos (independencia, nadie importa `svca_nucleo`, `svca_comun` no depende de servicios, capas `api > infrastructure > application > domain`, `domain` sin bibliotecas externas ni directa ni indirectamente), pytest con marcadores `unitaria`, `integracion`, `humo`. README reescrito. **Consecuencia para el Sprint 1:** el `Protocol Reloj` que ve `domain/` debe vivir en un módulo de `svca_comun` sin httpx (p. ej. `svca_comun.reloj`), y `RelojHttp` en otro (`svca_comun.reloj_http`); si no, el último contrato falla por importación indirecta.
   - [ ] 3. `tools/db_aplicar.py`.
   - [ ] 4. `svca_comun` mínimo y una aplicación por servicio.
   - [ ] 5. Imágenes.

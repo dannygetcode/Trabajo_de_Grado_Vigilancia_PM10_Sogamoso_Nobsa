@@ -8,6 +8,7 @@ Resultado verificado el 2026-11-15: 1.803.476 filas, 6 estaciones, 2020-2024, ~3
 Uso:
     python tools/filtrar_ideam.py <export_nacional.csv> data/raw/ideam_corredor.csv
 """
+
 import re
 import sys
 
