@@ -1,0 +1,457 @@
+openapi: 3.1.0
+info:
+  title: Servicio de ingesta y validación (IRecepción) - Sprint 1
+  version: 1.0.0
+  description: |
+    Interfaz de recepción de mediciones horarias (RF-01, CU-01, P-02) y emisión
+    de tokens (CU-15, parte mínima que necesita el Sprint 1).
+
+    La fuente de datos solo conoce este contrato. El simulador y una fuente
+    real son intercambiables (RNF-04).
+
+    **Lo que este contrato no juzga.** Un valor fuera del rango físico, repetido
+    o con un salto brusco cumple el contrato: se registra en `CRUDO` y lo
+    califica la validación (RF-02, Sprint 2). El contrato solo rechaza lo que
+    no se puede registrar sin alterarlo o sin ambigüedad.
+
+    **Tiempo.** Las fechas llevan desplazamiento explícito (`Z` o `-05:00`) y se
+    guardan en UTC. `recibida_en` es la hora del servicio de reloj. Una medición
+    cuyo `fin` es posterior a la hora del reloj se rechaza: aceptar datos del
+    futuro abriría una fuga temporal hacia el pronóstico (RNF-02).
+
+    Las interfaces de revisión, configuración, exportación y los disparos del
+    planificador se agregan a este archivo en el Sprint 2.
+servers:
+  - url: http://nucleo:8000/ingesta
+    description: Compose (montado en el contenedor nucleo, ADR-0001)
+  - url: https://{host}/ingesta
+    description: Nube (contenedor nucleo, ADR-0003)
+    variables:
+      host:
+        default: localhost
+  - url: http://localhost:8000
+    description: Servicio arrancado solo, para pruebas
+security:
+  - tokenPortador: []
+tags:
+  - name: sesiones
+  - name: mediciones
+paths:
+  /v1/salud:
+    get:
+      tags: [mediciones]
+      summary: Comprobación de vida
+      operationId: salud
+      security: []
+      responses:
+        '200':
+          description: El servicio responde
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Salud'
+  /v1/sesiones:
+    post:
+      tags: [sesiones]
+      summary: Iniciar sesión y obtener un token
+      operationId: iniciarSesion
+      security: []
+      description: |
+        Sirve igual para personas y para cuentas de servicio (rol `SERVICIO` o
+        `SIMULADOR`). El token es un JWT RS256 con `sub`, `rol`, `permisos`,
+        `iat` y `exp`. El vencimiento usa la hora real.
+
+        La respuesta de error es la misma para contraseña equivocada, cuenta
+        inexistente, bloqueada o inactiva, para no revelar qué cuentas existen.
+        Cada contraseña equivocada suma un intento y al quinto la cuenta queda
+        `BLOQUEADA` (RNF-17). Un inicio correcto reinicia el contador. Todo
+        intento queda en la auditoría (RNF-05).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credenciales'
+      responses:
+        '200':
+          description: Sesión iniciada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sesion'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          description: '`CREDENCIALES_INVALIDAS`: credenciales incorrectas o cuenta no disponible.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+        '503':
+          description: |
+            `RELOJ_NO_DISPONIBLE`: no se pudo fechar el registro de auditoría.
+            No se emite el token, porque todo acceso debe quedar registrado
+            (RNF-05).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+  /v1/mediciones:
+    post:
+      tags: [mediciones]
+      summary: Enviar un lote de mediciones horarias
+      operationId: recibirLote
+      description: |
+        Permiso `ingesta`.
+
+        **Todo o nada frente al contrato.** Si una sola medición incumple el
+        contrato, se responde 400 con la lista completa de errores y no se
+        registra ninguna (CU-01, flujo 4a).
+
+        **Duplicadas.** Una medición con la misma estación, variable e `inicio`
+        que una ya registrada, o que otra anterior del mismo lote, se cuenta
+        como duplicada y no detiene el lote (flujo 5a). Se conserva la primera,
+        aunque el valor sea distinto: el dato crudo no se reemplaza (RF-04).
+        Por eso reenviar un lote tras un error de red es seguro.
+
+        **Reglas del contrato** (código en `errores[].codigo`):
+
+        | Código | Regla |
+        |---|---|
+        | `FORMATO` | Campo faltante, de más o de tipo incorrecto |
+        | `SIN_ZONA_HORARIA` | `inicio` o `fin` sin desplazamiento |
+        | `HORA_NO_ALINEADA` | `inicio` no es una hora en punto o `fin` no es `inicio` + 1 h |
+        | `MEDICION_FUTURA` | `fin` es posterior a la hora del reloj |
+        | `ESTACION_DESCONOCIDA` | El código no existe en `estacion` |
+        | `ESTACION_INACTIVA` | La estación está `INACTIVA` |
+        | `VARIABLE_DESCONOCIDA` | El código no existe en `variable` |
+        | `VARIABLE_NO_MEDIDA` | La estación no mide esa variable (`estacion_variable`) |
+        | `VALOR_NO_REPRESENTABLE` | Más de tres decimales o valor absoluto de 10 000 000 o más: no cabe en `NUMERIC(10,3)` y redondearlo alteraría el dato crudo |
+        | `FALLA_DESCONOCIDA` | `falla_id` no existe |
+
+        Responde 202 y no 200 porque, desde el Sprint 2, la validación del lote
+        se solicita dentro de esta misma operación y el resumen solo informa la
+        recepción (Figura 31).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoteMediciones'
+            example:
+              mediciones:
+                - estacion: UPTC
+                  variable: PM10
+                  inicio: '2022-03-01T06:00:00Z'
+                  fin: '2022-03-01T07:00:00Z'
+                  valor: 41.2
+                - estacion: RECREO
+                  variable: PM2.5
+                  inicio: '2022-03-01T06:00:00Z'
+                  fin: '2022-03-01T07:00:00Z'
+                  valor: 999.9
+                  falla_id: 12
+      responses:
+        '202':
+          description: Lote aceptado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumenLote'
+              example:
+                recibidas: 8
+                registradas: 7
+                duplicadas: 1
+                recibido_en: '2022-03-01T07:00:00Z'
+        '400':
+          description: El lote incumple el contrato. No se registró ninguna medición.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+              example:
+                codigo: LOTE_INVALIDO
+                mensaje: El lote tiene 1 error y no se registró.
+                errores:
+                  - indice: 3
+                    campo: fin
+                    codigo: HORA_NO_ALINEADA
+                    mensaje: fin debe ser inicio más una hora.
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '413':
+          description: '`LOTE_DEMASIADO_GRANDE`: más de 2000 mediciones.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+        '503':
+          description: |
+            `RELOJ_NO_DISPONIBLE`: no se pudo consultar el servicio de reloj. El
+            lote no se registró y puede reenviarse.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+    get:
+      tags: [mediciones]
+      summary: Consultar mediciones registradas
+      operationId: listarMediciones
+      description: |
+        Permiso `consultar_red`. Orden: `inicio`, estación, variable. No expone
+        `falla_id`, para que quien revisa no sepa qué datos fueron alterados.
+      parameters:
+        - name: desde
+          in: query
+          required: true
+          description: Inicio del periodo, incluido.
+          schema:
+            type: string
+            format: date-time
+        - name: hasta
+          in: query
+          required: true
+          description: Fin del periodo, excluido. Máximo 366 días después de `desde`.
+          schema:
+            type: string
+            format: date-time
+        - name: estacion
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: variable
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoMedicion'
+        - name: limite
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 500
+        - name: desplazamiento
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Página de mediciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginaMediciones'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+components:
+  securitySchemes:
+    tokenPortador:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token RS256 emitido por `POST /v1/sesiones`.
+  responses:
+    SolicitudInvalida:
+      description: La solicitud no cumple el contrato
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    NoAutenticado:
+      description: Falta el token, está vencido o su firma no es válida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    SinPermiso:
+      description: El token no incluye el permiso requerido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+  schemas:
+    Salud:
+      type: object
+      required: [estado]
+      properties:
+        estado:
+          type: string
+          enum: [ok]
+    Credenciales:
+      type: object
+      additionalProperties: false
+      required: [correo, contrasena]
+      properties:
+        correo:
+          type: string
+          format: email
+          maxLength: 160
+        contrasena:
+          type: string
+          minLength: 1
+          maxLength: 200
+          writeOnly: true
+    Sesion:
+      type: object
+      required: [token, tipo, expira_en, rol, permisos]
+      properties:
+        token:
+          type: string
+        tipo:
+          type: string
+          enum: [Bearer]
+        expira_en:
+          type: integer
+          description: Segundos reales hasta el vencimiento.
+          examples: [3600]
+        rol:
+          type: string
+          examples: [TECNICO]
+        permisos:
+          type: array
+          items:
+            type: string
+    LoteMediciones:
+      type: object
+      additionalProperties: false
+      required: [mediciones]
+      properties:
+        mediciones:
+          type: array
+          minItems: 1
+          maxItems: 2000
+          items:
+            $ref: '#/components/schemas/MedicionEntrada'
+    MedicionEntrada:
+      type: object
+      additionalProperties: false
+      required: [estacion, variable, inicio, fin, valor]
+      properties:
+        estacion:
+          type: string
+          maxLength: 20
+          description: Código de la estación (`estacion.codigo`).
+          examples: [UPTC]
+        variable:
+          type: string
+          maxLength: 20
+          description: Código de la variable (`variable.codigo`).
+          examples: [PM10]
+        inicio:
+          type: string
+          format: date-time
+          description: Inicio de la hora medida, en punto.
+        fin:
+          type: string
+          format: date-time
+          description: '`inicio` más una hora.'
+        valor:
+          type: [number, 'null']
+          description: |
+            Valor tal como lo reporta la estación, en la unidad de la variable.
+            `null` significa que la estación transmitió pero sin valor. Una hora
+            sin transmisión simplemente no se envía.
+        falla_id:
+          type: integer
+          description: |
+            Solo lo envía el simulador: identifica la falla inyectada que alteró
+            esta medición. Se guarda para medir después la detección. Las reglas
+            de validación tienen prohibido leerlo.
+    ResumenLote:
+      type: object
+      required: [recibidas, registradas, duplicadas, recibido_en]
+      properties:
+        recibidas:
+          type: integer
+          description: Mediciones del lote. Siempre `registradas` + `duplicadas`.
+        registradas:
+          type: integer
+          description: Mediciones nuevas guardadas en estado `CRUDO`.
+        duplicadas:
+          type: integer
+        recibido_en:
+          type: string
+          format: date-time
+          description: Hora del reloj con la que se fechó el lote.
+    EstadoMedicion:
+      type: string
+      enum: [CRUDO, VALIDO, SOSPECHOSO, INVALIDO, VALIDADO_MANUAL, CORREGIDO, INVALIDADO]
+    Medicion:
+      type: object
+      required: [id, estacion, variable, inicio, fin, valor_crudo, estado, regla_aplicada, recibida_en]
+      properties:
+        id:
+          type: integer
+          format: int64
+        estacion:
+          type: string
+        variable:
+          type: string
+        inicio:
+          type: string
+          format: date-time
+        fin:
+          type: string
+          format: date-time
+        valor_crudo:
+          type: [number, 'null']
+        estado:
+          $ref: '#/components/schemas/EstadoMedicion'
+        regla_aplicada:
+          type: [string, 'null']
+        recibida_en:
+          type: string
+          format: date-time
+    PaginaMediciones:
+      type: object
+      required: [total, elementos]
+      properties:
+        total:
+          type: integer
+          description: Mediciones que cumplen el filtro, sin paginar.
+        elementos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Medicion'
+    Problema:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo:
+          type: string
+        mensaje:
+          type: string
+        errores:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDeCampo'
+    ErrorDeCampo:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        indice:
+          type: [integer, 'null']
+          description: Posición de la medición dentro del lote, desde 0.
+        campo:
+          type: [string, 'null']
+        codigo:
+          type: string
+        mensaje:
+          type: string

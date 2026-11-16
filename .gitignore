@@ -25,6 +25,8 @@ data/
 .env
 .env.*
 !.env.example
+infra/secretos/
+*.pem
 
 # Word abierto y sistema
 ~$*.docx
