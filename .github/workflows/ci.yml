@@ -1,0 +1,137 @@
+# Integración continua (docs/planes/sprint-0-construccion.md, tarea 8; ADR-0003).
+# Gratis y sin tope de minutos mientras el repositorio sea público.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  calidad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.17"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: ruff (lint y formato; incluye la prohibición de leer la hora del sistema)
+        run: |
+          uv run ruff check . --output-format github
+          uv run ruff format --check .
+      - run: uv run mypy
+      - name: import-linter (límites entre servicios, ADR-0001)
+        run: uv run lint-imports
+      - name: Contratos OpenAPI de diseño
+        run: uv run openapi-spec-validator docs/api/*.yaml
+
+  pruebas:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pruebas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      SVCA_PRUEBAS_DB_URL: postgresql://postgres:pruebas@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.17"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Unitarias e integración contra PostgreSQL 16
+        run: uv run pytest -m "unitaria or integracion" --cov --cov-report=term --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cobertura
+          path: coverage.xml
+          retention-days: 30
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  compose:
+    # Verificación continua de RNF-20: el sistema completo se levanta con un solo archivo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.17"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Levantar infra/docker-compose.yml sin .env
+        run: docker compose -f infra/docker-compose.yml up --build -d --wait --wait-timeout 300
+      - name: Pruebas de humo
+        env:
+          SVCA_HUMO_URL_NUCLEO: http://localhost:8000
+          SVCA_HUMO_URL_PRONOSTICO: http://localhost:8001
+          SVCA_HUMO_URL_SIMULADOR: http://localhost:8002
+          SVCA_HUMO_URL_WEB: http://localhost:8080
+          SVCA_HUMO_ESPERA_S: "60"
+        run: uv run pytest -m humo
+      - name: RNF-15, con pronostico detenido el núcleo sigue respondiendo
+        run: |
+          docker compose -f infra/docker-compose.yml stop pronostico
+          curl -fsS "http://localhost:8000/salud?profundo=true"
+      - name: Registros si algo falló
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --no-color
+      - name: Apagar
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+
+  migrar:
+    # Aplica db/ en la base de la nube tras integrar en main. Sin el secreto, no hace nada.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [calidad, pruebas, web, compose]
+    runs-on: ubuntu-latest
+    env:
+      SVCA_DB_URL: ${{ secrets.SVCA_NUBE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.SVCA_DB_URL != ''
+      - uses: astral-sh/setup-uv@v6
+        if: env.SVCA_DB_URL != ''
+        with:
+          version: "0.12.17"
+          enable-cache: true
+      - name: Aplicar scripts pendientes
+        if: env.SVCA_DB_URL != ''
+        run: |
+          uv sync --frozen --no-dev --package svca-comun
+          uv run --no-sync python tools/db_aplicar.py
+      - name: Sin base de la nube configurada
+        if: env.SVCA_DB_URL == ''
+        run: echo "SVCA_NUBE_DB_URL no está definido; se omite la migración."
