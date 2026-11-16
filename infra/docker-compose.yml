@@ -1,0 +1,123 @@
+# Sistema completo con una sola orden (RNF-20, ADR-0003):
+#   docker compose -f infra/docker-compose.yml up --build
+# No necesita .env: los valores por defecto sirven en local. Para cambiarlos, copia
+# infra/.env.example a infra/.env. Misma topología que la nube: tres contenedores de
+# aplicación (ADR-0001), más la base, el migrador, la web y el correo de pruebas.
+
+name: svca
+
+x-salud-python: &salud-python
+  interval: 5s
+  timeout: 3s
+  retries: 12
+  start_period: 5s
+
+x-entorno-comun: &entorno-comun
+  SVCA_DB_URL: postgresql://svca:${SVCA_BD_CONTRASENA:-desarrollo}@bd:5432/svca
+  SVCA_ORIGENES: ${SVCA_ORIGENES:-http://localhost:8080}
+
+services:
+  bd:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: svca
+      POSTGRES_PASSWORD: ${SVCA_BD_CONTRASENA:-desarrollo}  # solo desarrollo
+      POSTGRES_DB: svca
+    ports:
+      - "${SVCA_PUERTO_BD:-5432}:5432"
+    volumes:
+      - datos_bd:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U svca -d svca"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrador:
+    # Misma imagen que el núcleo: trae db/ y tools/db_aplicar.py. Aplica lo pendiente y termina.
+    image: svca-nucleo:local
+    build:
+      context: ..
+      dockerfile: infra/docker/nucleo.Dockerfile
+    command: ["python", "tools/db_aplicar.py"]
+    environment:
+      <<: *entorno-comun
+    depends_on:
+      bd:
+        condition: service_healthy
+    restart: "no"
+
+  nucleo:
+    image: svca-nucleo:local
+    # Un único worker, fijado en el Dockerfile: el reloj vive en memoria. No escalar.
+    environment:
+      <<: *entorno-comun
+      SVCA_CORREO_SMTP: correo:1025
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrador:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/salud', timeout=3)"]
+      <<: *salud-python
+
+  pronostico:
+    image: svca-pronostico:local
+    build:
+      context: ..
+      dockerfile: infra/docker/pronostico.Dockerfile
+    environment:
+      <<: *entorno-comun
+    ports:
+      - "8001:8000"
+    depends_on:
+      migrador:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/salud', timeout=3)"]
+      <<: *salud-python
+
+  simulador:
+    image: svca-simulador:local
+    build:
+      context: ..
+      dockerfile: infra/docker/simulador.Dockerfile
+    environment:
+      <<: *entorno-comun
+      SVCA_URL_NUCLEO: http://nucleo:8000
+      SIM_HISTORICO: /datos/historico_normalizado.csv
+    ports:
+      - "8002:8000"
+    volumes:
+      # El histórico normalizado vive fuera del repositorio (tools/perfil_datos.py lo genera).
+      - ${SIM_HISTORICO_DIR:-./vacio}:/datos:ro
+    depends_on:
+      migrador:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/salud', timeout=3)"]
+      <<: *salud-python
+
+  web:
+    image: svca-web:local
+    build:
+      context: ../web
+      dockerfile: ../infra/docker/web.Dockerfile
+      args:
+        # El navegador llama a las APIs desde fuera de la red de contenedores.
+        VITE_URL_NUCLEO: http://localhost:8000
+        VITE_URL_PRONOSTICO: http://localhost:8001
+        VITE_URL_SIMULADOR: http://localhost:8002
+    ports:
+      - "8080:8080"
+
+  correo:
+    # Servidor de pruebas de 3.6.7: captura los correos sin entregarlos. Bandeja en :8025.
+    image: axllent/mailpit:v1.27.0
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+volumes:
+  datos_bd:
