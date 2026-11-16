@@ -16,6 +16,39 @@ Hay siete servicios con responsabilidad acotada y contrato OpenAPI propio: reloj
 - `pronostico`: se puede detener sin afectar al resto (RNF-15).
 - `simulador`: fuente de datos sustituible (RNF-04).
 
+```mermaid
+flowchart LR
+    usuario(["Usuarios internos<br/>y ciudadanía"])
+    web["Web y vista pública<br/><i>sitio estático</i>"]
+
+    subgraph nucleo["Contenedor nucleo"]
+        direction TB
+        reloj["Reloj"]
+        planificador["Planificador"]
+        ingesta["Ingesta y<br/>validación"]
+        normativo["Normativo"]
+        notificaciones["Notificaciones<br/>e informes"]
+    end
+
+    pronostico["Contenedor<br/>pronostico"]
+    simulador["Contenedor simulador<br/><i>históricos IDEAM<br/>y fallas</i>"]
+    bd[("PostgreSQL 16<br/>esquema svca")]
+    correo["Correo"]
+
+    usuario -- HTTPS --> web
+    web -- "HTTPS + CORS" --> nucleo
+    web -- "HTTPS + CORS" --> pronostico
+    simulador -- "lotes horarios" --> ingesta
+    simulador -- "hora virtual" --> reloj
+    planificador -- "procesos horarios" --> normativo
+    planificador -- "pronóstico diario" --> pronostico
+    pronostico -- "propuesta" --> normativo
+    nucleo -- SQL --> bd
+    pronostico -- SQL --> bd
+    simulador -- SQL --> bd
+    notificaciones --> correo
+```
+
 Los servicios no se importan entre sí: se hablan por HTTP, también dentro del mismo contenedor, y import-linter lo comprueba en CI. Todos comparten una base PostgreSQL 16 (esquema `svca`), pero cada uno se conecta con un rol que solo puede escribir sus propias tablas. Ningún servicio toma la hora del sistema: todos se la piden al reloj.
 
 Decisiones y su justificación:
