@@ -12,6 +12,7 @@ htmlcov/
 node_modules/
 .next/
 dist/
+*.tsbuildinfo
 
 # Datos y modelos (no se suben)
 data/
@@ -25,6 +26,8 @@ data/
 .env
 .env.*
 !.env.example
+infra/secretos/
+*.pem
 
 # Word abierto y sistema
 ~$*.docx

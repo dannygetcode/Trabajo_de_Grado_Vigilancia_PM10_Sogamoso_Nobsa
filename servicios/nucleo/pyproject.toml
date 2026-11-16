@@ -1,0 +1,30 @@
+[project]
+name = "svca-nucleo"
+version = "0.1.0"
+description = "Raíz de composición del contenedor nucleo. Sin reglas de negocio (ADR-0001)."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "svca-comun",
+    "svca-reloj",
+    "svca-ingesta",
+    "svca-normativo",
+    "svca-notificaciones",
+    "svca-planificador",
+    "uvicorn>=0.32",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "svca_nucleo"
+module-root = ""
+
+[tool.uv.sources]
+svca-comun = { workspace = true }
+svca-reloj = { workspace = true }
+svca-ingesta = { workspace = true }
+svca-normativo = { workspace = true }
+svca-notificaciones = { workspace = true }
+svca-planificador = { workspace = true }

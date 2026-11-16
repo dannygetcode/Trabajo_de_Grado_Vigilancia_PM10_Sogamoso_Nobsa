@@ -1,0 +1,183 @@
+[project]
+name = "svca"
+version = "0.1.0"
+description = "Vigilancia de la calidad del aire y pronóstico de PM10 en el corredor Sogamoso-Nobsa"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "svca-comun",
+    "svca-reloj",
+    "svca-ingesta",
+    "svca-normativo",
+    "svca-notificaciones",
+    "svca-planificador",
+    "svca-pronostico",
+    "svca-simulador",
+    "svca-nucleo",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "anyio>=4.6",
+    "hypothesis>=6.120",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "openapi-spec-validator>=0.7",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
+    "uvicorn>=0.32",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+    "servicios/comun",
+    "simulador/reloj",
+    "servicios/ingesta",
+    "servicios/normativo",
+    "servicios/notificaciones",
+    "servicios/planificador",
+    "servicios/pronostico",
+    "simulador/estaciones",
+    "servicios/nucleo",
+]
+
+[tool.uv.sources]
+svca-comun = { workspace = true }
+svca-reloj = { workspace = true }
+svca-ingesta = { workspace = true }
+svca-normativo = { workspace = true }
+svca-notificaciones = { workspace = true }
+svca-planificador = { workspace = true }
+svca-pronostico = { workspace = true }
+svca-simulador = { workspace = true }
+svca-nucleo = { workspace = true }
+
+# ---------------------------------------------------------------- calidad
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+extend-exclude = ["docs", "data", "web", "infra"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "N", "SIM", "TID", "C4", "PT"]
+ignore = [
+    "E501",  # el formateador decide el largo; los textos largos no se parten a la fuerza
+    "N818",  # nombres en español: RelojNoDisponible, ErrorMigracion
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Ninguna hora de dominio se toma del sistema: se inyecta el reloj (CLAUDE.md, ADR-0002).
+# time.monotonic y time.perf_counter sí se permiten: miden duraciones, no fechan datos.
+"datetime.datetime.now".msg = "Hora del sistema prohibida: pide la hora al Reloj inyectado."
+"datetime.datetime.utcnow".msg = "Hora del sistema prohibida: pide la hora al Reloj inyectado."
+"datetime.datetime.today".msg = "Hora del sistema prohibida: pide la hora al Reloj inyectado."
+"datetime.date.today".msg = "Hora del sistema prohibida: pide la hora al Reloj inyectado."
+"time.time".msg = "Hora del sistema prohibida: usa el Reloj, o time.monotonic para duraciones."
+
+[tool.ruff.lint.per-file-ignores]
+# Excepciones previstas (docs/planes/reloj-virtual.md 3.7): se agregan con HU-02 y HU-04.
+# "simulador/reloj/svca_reloj/infrastructure/*" = ["TID251"]
+"tests/**" = ["N802"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["svca_*", "tools"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+explicit_package_bases = true
+mypy_path = "servicios/comun:servicios/ingesta:servicios/normativo:servicios/notificaciones:servicios/planificador:servicios/pronostico:servicios/nucleo:simulador/reloj:simulador/estaciones"
+files = [
+    "servicios/comun/svca_comun",
+    "servicios/nucleo/svca_nucleo",
+    "servicios/*/svca_*/domain",
+    "servicios/*/svca_*/application",
+    "simulador/*/svca_*/domain",
+    "simulador/*/svca_*/application",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--strict-markers -ra --import-mode=importlib"
+filterwarnings = [
+    # Starlette recomienda httpx2 para TestClient; se revisa al actualizar dependencias.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+markers = [
+    "unitaria: sin red ni base de datos",
+    "integracion: necesita PostgreSQL 16 (SVCA_PRUEBAS_DB_URL)",
+    "humo: contra un sistema levantado (SVCA_HUMO_URL_*)",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "svca_comun", "svca_reloj", "svca_ingesta", "svca_normativo", "svca_notificaciones",
+    "svca_planificador", "svca_pronostico", "svca_simulador", "svca_nucleo",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+# ---------------------------------------------------- límites entre servicios (ADR-0001)
+[tool.importlinter]
+root_packages = [
+    "svca_comun", "svca_reloj", "svca_ingesta", "svca_normativo", "svca_notificaciones",
+    "svca_planificador", "svca_pronostico", "svca_simulador", "svca_nucleo",
+]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Los servicios no se importan entre sí: se hablan por su contrato HTTP"
+type = "independence"
+modules = [
+    "svca_reloj", "svca_ingesta", "svca_normativo", "svca_notificaciones",
+    "svca_planificador", "svca_pronostico", "svca_simulador",
+]
+
+[[tool.importlinter.contracts]]
+name = "Solo svca_nucleo compone servicios; nadie importa svca_nucleo"
+type = "forbidden"
+source_modules = [
+    "svca_comun", "svca_reloj", "svca_ingesta", "svca_normativo", "svca_notificaciones",
+    "svca_planificador", "svca_pronostico", "svca_simulador",
+]
+forbidden_modules = ["svca_nucleo"]
+
+[[tool.importlinter.contracts]]
+name = "svca_comun no depende de ningún servicio"
+type = "forbidden"
+source_modules = ["svca_comun"]
+forbidden_modules = [
+    "svca_reloj", "svca_ingesta", "svca_normativo", "svca_notificaciones",
+    "svca_planificador", "svca_pronostico", "svca_simulador",
+]
+
+[[tool.importlinter.contracts]]
+name = "Capas de cada servicio: las dependencias apuntan hacia domain"
+type = "layers"
+layers = ["api", "infrastructure", "application", "domain"]
+containers = [
+    "svca_reloj", "svca_ingesta", "svca_normativo", "svca_notificaciones",
+    "svca_pronostico", "svca_simulador",
+]
+
+[[tool.importlinter.contracts]]
+name = "domain no importa bibliotecas externas (ni directa ni indirectamente)"
+type = "forbidden"
+source_modules = [
+    "svca_reloj.domain", "svca_ingesta.domain", "svca_normativo.domain",
+    "svca_notificaciones.domain", "svca_pronostico.domain", "svca_simulador.domain",
+]
+forbidden_modules = [
+    "fastapi", "starlette", "pydantic", "pydantic_settings", "sqlalchemy", "psycopg", "psycopg_pool",
+    "httpx", "uvicorn", "pandas", "numpy", "sklearn", "joblib", "weasyprint", "matplotlib", "jinja2",
+]

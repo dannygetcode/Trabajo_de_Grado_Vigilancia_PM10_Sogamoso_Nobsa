@@ -1,0 +1,1 @@
+Carpeta vacía que se monta como histórico cuando SIM_HISTORICO_DIR no está definida.

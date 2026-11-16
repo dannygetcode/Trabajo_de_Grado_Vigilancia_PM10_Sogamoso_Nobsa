@@ -1,0 +1,582 @@
+openapi: 3.1.0
+info:
+  title: Simulador de estaciones (control de la simulación)
+  version: 1.0.0
+  description: |
+    API de control para CU-14: escenarios de reproducción y fallas inyectadas
+    (RF-16). Todas las operaciones piden el permiso `simulacion`.
+
+    El simulador es **cliente** de las otras dos interfaces: consulta y controla
+    el servicio de reloj (`reloj.yaml`) y envía los lotes a la ingesta
+    (`ingesta.yaml`). Esta API es lo único que expone.
+
+    **Ciclo de cada hora virtual (P-01, Figura 30).** Cuando el reloj llega a
+    la hora `t`, el simulador lee del archivo histórico las mediciones con
+    `inicio` en `[t - 1 h, t)`, aplica las fallas activas, envía el lote a
+    `POST /v1/mediciones`, guarda `reloj_actual = t` y confirma `t` al reloj.
+    Si la ingesta no responde, reintenta sin confirmar: el reloj queda
+    `RETENIDO` y no se pierde ninguna hora.
+
+    **Un solo escenario activo.** El reloj es único para todo el sistema, así
+    que solo un escenario puede estar `EN_EJECUCION` o `PAUSADO` a la vez.
+
+    **Fallas.** El intervalo es `[inicio, fin)` y afecta a las mediciones de la
+    estación y variable indicadas cuyo `inicio` cae dentro.
+
+    | Tipo | Efecto sobre el lote |
+    |---|---|
+    | `FUERA_DE_RANGO` | Sustituye el valor por uno fuera de `[minimo_fisico, maximo_fisico]` |
+    | `VALOR_REPETIDO` | Repite el último valor anterior a la falla durante todo el intervalo |
+    | `CAMBIO_BRUSCO` | Suma un salto al valor histórico |
+    | `AUSENCIA_DE_DATO` | No envía las mediciones del intervalo |
+
+    Las mediciones alteradas viajan con `falla_id`. Las omitidas por
+    `AUSENCIA_DE_DATO` no viajan. Las magnitudes salen de la configuración del
+    simulador y de una semilla derivada del identificador de la falla, de modo
+    que el mismo escenario produce siempre los mismos lotes.
+
+    **Repetir un periodo.** La ingesta descarta duplicados, así que reproducir
+    dos veces el mismo periodo sobre la misma base no registra nada nuevo. Para
+    repetir un experimento hay que partir de una base limpia.
+servers:
+  - url: http://simulador:8000
+    description: Compose (contenedor simulador)
+  - url: https://{host}
+    description: Nube (contenedor simulador, ADR-0003)
+    variables:
+      host:
+        default: localhost
+security:
+  - tokenPortador: []
+tags:
+  - name: escenarios
+  - name: historico
+paths:
+  /v1/salud:
+    get:
+      tags: [escenarios]
+      summary: Comprobación de vida
+      description: >-
+        Sin parámetros no toca la base de datos, para no despertar la base gratuita (ADR-0003).
+        Con `profundo=true` comprueba además la conexión a la base con `SELECT 1`.
+      operationId: salud
+      security: []
+      parameters:
+        - name: profundo
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: El servicio responde
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Salud'
+        '503':
+          description: '`BASE_NO_DISPONIBLE`: se pidió `profundo=true` y la base de datos no respondió o no está configurada.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+  /v1/historico:
+    get:
+      tags: [historico]
+      summary: Cobertura del archivo histórico cargado
+      operationId: consultarHistorico
+      description: Indica qué periodos se pueden reproducir.
+      responses:
+        '200':
+          description: Cobertura por serie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoberturaHistorico'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+  /v1/escenarios:
+    post:
+      tags: [escenarios]
+      summary: Crear un escenario con sus fallas
+      operationId: crearEscenario
+      description: |
+        Queda en `CONFIGURADO` y las fallas en `PROGRAMADA`. Si algo no es
+        válido no se guarda nada (CU-14, flujo 4a).
+
+        | Código | Regla |
+        |---|---|
+        | `FORMATO` | Campo faltante, de más o de tipo incorrecto |
+        | `HORA_NO_ALINEADA` | Una fecha no es hora en punto |
+        | `PERIODO_INVALIDO` | `periodo_inicio` no es anterior a `periodo_fin` |
+        | `PERIODO_SIN_HISTORICO` | El archivo histórico no cubre el periodo |
+        | `FALLA_FUERA_DE_PERIODO` | El intervalo de una falla se sale del periodo |
+        | `FALLAS_SOLAPADAS` | Dos fallas de la misma estación y variable se cruzan en el tiempo |
+        | `ESTACION_DESCONOCIDA`, `VARIABLE_DESCONOCIDA`, `VARIABLE_NO_MEDIDA` | Igual que en la ingesta |
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EscenarioEntrada'
+            example:
+              nombre: Marzo 2022 con fallas
+              periodo_inicio: '2022-03-01T05:00:00Z'
+              periodo_fin: '2022-04-01T05:00:00Z'
+              velocidad_reloj: 3600
+              fallas:
+                - estacion: RECREO
+                  variable: PM10
+                  tipo: VALOR_REPETIDO
+                  inicio: '2022-03-10T05:00:00Z'
+                  fin: '2022-03-10T17:00:00Z'
+      responses:
+        '201':
+          description: Escenario creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escenario'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+    get:
+      tags: [escenarios]
+      summary: Listar escenarios
+      operationId: listarEscenarios
+      parameters:
+        - name: estado
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EstadoEscenario'
+      responses:
+        '200':
+          description: Escenarios, del más reciente al más antiguo, sin el detalle de fallas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EscenarioResumen'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+  /v1/escenarios/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdEscenario'
+    get:
+      tags: [escenarios]
+      summary: Consultar un escenario con sus fallas y su avance
+      operationId: obtenerEscenario
+      responses:
+        '200':
+          description: Escenario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escenario'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+    put:
+      tags: [escenarios]
+      summary: Reemplazar un escenario que aún no se ha iniciado
+      operationId: reemplazarEscenario
+      description: Solo en estado `CONFIGURADO`. Reemplaza también la lista de fallas.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EscenarioEntrada'
+      responses:
+        '200':
+          description: Escenario actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escenario'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/TransicionInvalida'
+  /v1/escenarios/{id}/inicio:
+    parameters:
+      - $ref: '#/components/parameters/IdEscenario'
+    post:
+      tags: [escenarios]
+      summary: Iniciar el escenario
+      operationId: iniciarEscenario
+      description: |
+        `CONFIGURADO` → `EN_EJECUCION`. Configura el reloj en modo virtual desde
+        `periodo_inicio` y comienza el envío de lotes.
+      responses:
+        '200':
+          description: Escenario en ejecución
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escenario'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          description: |
+            `TRANSICION_INVALIDA`: el escenario no está `CONFIGURADO`.
+            `OTRO_ESCENARIO_ACTIVO`: ya hay un escenario en ejecución o pausado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+        '503':
+          $ref: '#/components/responses/RelojNoDisponible'
+  /v1/escenarios/{id}/pausa:
+    parameters:
+      - $ref: '#/components/parameters/IdEscenario'
+    post:
+      tags: [escenarios]
+      summary: Pausar el escenario
+      operationId: pausarEscenario
+      description: '`EN_EJECUCION` → `PAUSADO`. Congela el reloj. Termina antes el lote que esté en curso.'
+      responses:
+        '200':
+          description: Escenario en pausa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escenario'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/TransicionInvalida'
+        '503':
+          $ref: '#/components/responses/RelojNoDisponible'
+  /v1/escenarios/{id}/reanudacion:
+    parameters:
+      - $ref: '#/components/parameters/IdEscenario'
+    post:
+      tags: [escenarios]
+      summary: Reanudar el escenario
+      operationId: reanudarEscenario
+      description: '`PAUSADO` → `EN_EJECUCION`. El reloj sigue desde `reloj_actual`.'
+      responses:
+        '200':
+          description: Escenario en ejecución
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escenario'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/TransicionInvalida'
+        '503':
+          $ref: '#/components/responses/RelojNoDisponible'
+  /v1/escenarios/{id}/detencion:
+    parameters:
+      - $ref: '#/components/parameters/IdEscenario'
+    post:
+      tags: [escenarios]
+      summary: Detener el escenario antes del fin del periodo
+      operationId: detenerEscenario
+      description: |
+        `EN_EJECUCION` o `PAUSADO` → `FINALIZADO`. No se puede reanudar. El
+        reloj queda congelado en la última hora; volver a la hora real exige
+        configurarlo en modo `REAL`. Las fallas que no alcanzaron a inyectarse
+        quedan `PROGRAMADA`.
+      responses:
+        '200':
+          description: Escenario finalizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Escenario'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '404':
+          $ref: '#/components/responses/NoEncontrado'
+        '409':
+          $ref: '#/components/responses/TransicionInvalida'
+        '503':
+          $ref: '#/components/responses/RelojNoDisponible'
+components:
+  securitySchemes:
+    tokenPortador:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token RS256 emitido por `POST /v1/sesiones` del servicio de ingesta.
+  parameters:
+    IdEscenario:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    SolicitudInvalida:
+      description: La solicitud no cumple el contrato. No se guardó nada.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    NoAutenticado:
+      description: Falta el token, está vencido o su firma no es válida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    SinPermiso:
+      description: El token no incluye el permiso `simulacion`
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    NoEncontrado:
+      description: '`ESCENARIO_NO_ENCONTRADO`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    TransicionInvalida:
+      description: '`TRANSICION_INVALIDA`: el estado actual del escenario no admite la operación (Figura 16).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    RelojNoDisponible:
+      description: '`RELOJ_NO_DISPONIBLE`: no se pudo controlar el servicio de reloj. El escenario no cambió de estado.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+  schemas:
+    Salud:
+      type: object
+      required: [estado]
+      properties:
+        estado:
+          type: string
+          enum: [ok]
+        servicio:
+          type: string
+        version:
+          type: string
+        base:
+          type: string
+          enum: [ok]
+          description: Solo aparece con `profundo=true`.
+    EstadoEscenario:
+      type: string
+      enum: [CONFIGURADO, EN_EJECUCION, PAUSADO, FINALIZADO]
+    TipoFalla:
+      type: string
+      enum: [FUERA_DE_RANGO, VALOR_REPETIDO, CAMBIO_BRUSCO, AUSENCIA_DE_DATO]
+    EstadoFalla:
+      type: string
+      enum: [PROGRAMADA, INYECTADA, DETECTADA, NO_DETECTADA]
+      description: |
+        `DETECTADA` y `NO_DETECTADA` se asignan al terminar la falla, cuando
+        exista la validación (Sprint 2). En el Sprint 1 una falla aplicada se
+        queda en `INYECTADA`.
+    EscenarioEntrada:
+      type: object
+      additionalProperties: false
+      required: [nombre, periodo_inicio, periodo_fin, velocidad_reloj]
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 80
+        periodo_inicio:
+          type: string
+          format: date-time
+          description: Hora en punto, con desplazamiento explícito.
+        periodo_fin:
+          type: string
+          format: date-time
+          description: Hora en punto, posterior a `periodo_inicio`.
+        velocidad_reloj:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 999999.99
+          description: |
+            Segundos virtuales por segundo real. 1 es tiempo real, 3600 es una
+            hora por segundo y 17520 reproduce un año en 30 minutos (RNF-11).
+        fallas:
+          type: array
+          maxItems: 500
+          default: []
+          items:
+            $ref: '#/components/schemas/FallaEntrada'
+    FallaEntrada:
+      type: object
+      additionalProperties: false
+      required: [estacion, variable, tipo, inicio, fin]
+      properties:
+        estacion:
+          type: string
+          maxLength: 20
+        variable:
+          type: string
+          maxLength: 20
+        tipo:
+          $ref: '#/components/schemas/TipoFalla'
+        inicio:
+          type: string
+          format: date-time
+        fin:
+          type: string
+          format: date-time
+    Falla:
+      type: object
+      required: [id, estacion, variable, tipo, inicio, fin, estado]
+      properties:
+        id:
+          type: integer
+        estacion:
+          type: string
+        variable:
+          type: string
+        tipo:
+          $ref: '#/components/schemas/TipoFalla'
+        inicio:
+          type: string
+          format: date-time
+        fin:
+          type: string
+          format: date-time
+        estado:
+          $ref: '#/components/schemas/EstadoFalla'
+    EscenarioResumen:
+      type: object
+      required: [id, nombre, periodo_inicio, periodo_fin, velocidad_reloj, reloj_actual, estado]
+      properties:
+        id:
+          type: integer
+        nombre:
+          type: string
+        periodo_inicio:
+          type: string
+          format: date-time
+        periodo_fin:
+          type: string
+          format: date-time
+        velocidad_reloj:
+          type: number
+        reloj_actual:
+          type: [string, 'null']
+          format: date-time
+          description: Última hora cuyo lote fue aceptado por la ingesta. `null` antes de iniciar.
+        estado:
+          $ref: '#/components/schemas/EstadoEscenario'
+    Escenario:
+      allOf:
+        - $ref: '#/components/schemas/EscenarioResumen'
+        - type: object
+          required: [fallas, avance]
+          properties:
+            fallas:
+              type: array
+              items:
+                $ref: '#/components/schemas/Falla'
+            avance:
+              $ref: '#/components/schemas/Avance'
+    Avance:
+      type: object
+      description: Contadores de la ejecución actual. Se reinician si el simulador se reinicia.
+      required: [lotes_enviados, mediciones_registradas, mediciones_duplicadas, ultimo_error]
+      properties:
+        lotes_enviados:
+          type: integer
+        mediciones_registradas:
+          type: integer
+        mediciones_duplicadas:
+          type: integer
+        ultimo_error:
+          type: [string, 'null']
+          description: Último fallo al enviar un lote o al hablar con el reloj, si lo hubo.
+    CoberturaHistorico:
+      type: object
+      required: [desde, hasta, series]
+      properties:
+        desde:
+          type: [string, 'null']
+          format: date-time
+        hasta:
+          type: [string, 'null']
+          format: date-time
+        series:
+          type: array
+          items:
+            type: object
+            required: [estacion, variable, desde, hasta, registros]
+            properties:
+              estacion:
+                type: string
+              variable:
+                type: string
+              desde:
+                type: string
+                format: date-time
+              hasta:
+                type: string
+                format: date-time
+              registros:
+                type: integer
+    Problema:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo:
+          type: string
+        mensaje:
+          type: string
+        errores:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDeCampo'
+    ErrorDeCampo:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        indice:
+          type: [integer, 'null']
+          description: Posición de la falla dentro de la lista enviada, desde 0.
+        campo:
+          type: [string, 'null']
+        codigo:
+          type: string
+        mensaje:
+          type: string

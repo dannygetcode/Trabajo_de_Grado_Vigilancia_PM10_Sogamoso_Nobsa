@@ -1,0 +1,482 @@
+openapi: 3.1.0
+info:
+  title: Servicio de reloj (IReloj)
+  version: 1.0.0
+  description: |
+    Única fuente de la hora de dominio para todos los servicios (3.6.6).
+    Ningún servicio usa `now()` del sistema para fechar datos.
+
+    **Modos.** `REAL`: devuelve la hora del sistema en UTC. `VIRTUAL`: devuelve
+    la hora de un escenario de simulación, que avanza a `velocidad` segundos
+    virtuales por segundo real.
+
+    **Barrera horaria.** En modo virtual el reloj nunca pasa de `barrera`.
+    La barrera es la menor hora confirmada entre los participantes, más una
+    hora, y nunca supera `fin`. Cada participante confirma la hora `t` cuando
+    terminó todo su trabajo del intervalo que acaba en `t`. Con velocidad 1 la
+    barrera no se nota. En reproducción acelerada hace que el reloj espere al
+    sistema en lugar de dejarlo atrás, y eso vuelve reproducible el resultado:
+    ninguna evaluación de la hora `t` corre antes de que el lote de `t` esté
+    registrado. El tiempo retenido en la barrera no se recupera después.
+
+    **Participantes.** Sprint 1: `simulador`. Desde el Sprint 2 se agrega
+    `planificador`, que confirma cuando terminan los procesos horarios.
+
+    **Arranque.** Si al iniciar existe un escenario `EN_EJECUCION` o `PAUSADO`,
+    el reloj arranca en modo `VIRTUAL`, `PAUSADO`, en `reloj_actual`, y espera a
+    que el simulador lo configure de nuevo. Nunca cae a la hora real en medio
+    de una reproducción.
+
+    **Época.** `epoca` aumenta cada vez que el reloj se reconfigura y no se
+    repite aunque el servicio se reinicie. Un cliente
+    que ve cambiar la época sabe que la hora pudo saltar hacia atrás y debe
+    descartar lo que tenía programado.
+
+    El vencimiento de los tokens usa la hora real, no este servicio (ADR-0002).
+servers:
+  - url: http://nucleo:8000/reloj
+    description: Compose (montado en el contenedor nucleo, ADR-0001)
+  - url: https://{host}/reloj
+    description: Nube (contenedor nucleo, ADR-0003)
+    variables:
+      host:
+        default: localhost
+  - url: http://localhost:8000
+    description: Servicio arrancado solo, para pruebas
+security:
+  - tokenPortador: []
+tags:
+  - name: hora
+  - name: control
+paths:
+  /v1/salud:
+    get:
+      tags: [hora]
+      summary: Comprobación de vida
+      description: >-
+        Sin parámetros no toca la base de datos, para no despertar la base gratuita (ADR-0003).
+        Con `profundo=true` comprueba además la conexión a la base con `SELECT 1`.
+      operationId: salud
+      security: []
+      parameters:
+        - name: profundo
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: El servicio responde
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Salud'
+        '503':
+          description: '`BASE_NO_DISPONIBLE`: se pidió `profundo=true` y la base de datos no respondió o no está configurada.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+  /v1/hora:
+    get:
+      tags: [hora]
+      summary: Hora actual de dominio
+      operationId: obtenerHora
+      description: |
+        Requiere cualquier token válido. Con `esperar_hasta` la respuesta se
+        retiene hasta que `ahora >= esperar_hasta`, hasta que cambie la época o
+        hasta agotar `espera_max`, lo que ocurra primero. Sirve para esperar el
+        siguiente cambio de hora sin sondear en bucle.
+
+        Con `turno_de`, además espera a que todos los participantes que van
+        antes en la lista `participantes` hayan confirmado `esperar_hasta`. Así
+        el planificador no evalúa la hora `t` antes de que el simulador haya
+        entregado el lote de `t`. En modo `REAL` se ignora.
+      parameters:
+        - name: turno_de
+          in: query
+          required: false
+          description: Solo tiene efecto junto con `esperar_hasta`.
+          schema:
+            type: string
+            enum: [simulador, planificador]
+        - name: esperar_hasta
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: espera_max
+          in: query
+          required: false
+          description: Segundos reales de espera máxima.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 30
+            default: 30
+      responses:
+        '200':
+          description: Estado del reloj
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hora'
+              examples:
+                real:
+                  value:
+                    ahora: '2026-11-15T14:03:27Z'
+                    modo: REAL
+                    estado: CORRIENDO
+                    velocidad: 1
+                    epoca: 1
+                    escenario_id: null
+                    barrera: null
+                    fin: null
+                    retenido_por: []
+                    confirmadas: []
+                virtualRetenido:
+                  value:
+                    ahora: '2022-03-01T07:00:00Z'
+                    modo: VIRTUAL
+                    estado: RETENIDO
+                    velocidad: 17520
+                    epoca: 4
+                    escenario_id: 3
+                    barrera: '2022-03-01T07:00:00Z'
+                    fin: '2023-01-01T05:00:00Z'
+                    retenido_por: [simulador]
+                    confirmadas:
+                      - participante: simulador
+                        hora: '2022-03-01T06:00:00Z'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+  /v1/reloj:
+    put:
+      tags: [control]
+      summary: Configurar el modo del reloj
+      operationId: configurarReloj
+      description: |
+        Permiso `simulacion`. Incrementa la época.
+
+        En modo `VIRTUAL` el reloj arranca en `inicio`, con todos los
+        participantes confirmados en `inicio` (barrera = `inicio` + 1 h). Para
+        retomar un escenario pausado tras un reinicio se envía como `inicio` el
+        `reloj_actual` guardado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfiguracionReloj'
+            examples:
+              virtual:
+                value:
+                  modo: VIRTUAL
+                  escenario_id: 3
+                  inicio: '2022-01-01T05:00:00Z'
+                  fin: '2023-01-01T05:00:00Z'
+                  velocidad: 17520
+                  participantes: [simulador]
+                  pausado: false
+              real:
+                value:
+                  modo: REAL
+      responses:
+        '200':
+          description: Reloj configurado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hora'
+        '400':
+          $ref: '#/components/responses/SolicitudInvalida'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '409':
+          description: |
+            `RELOJ_OCUPADO`: el reloj está en modo virtual ligado a otro
+            escenario. Hay que liberarlo antes con `modo: REAL`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+  /v1/reloj/pausa:
+    post:
+      tags: [control]
+      summary: Congelar el reloj virtual
+      operationId: pausarReloj
+      description: Permiso `simulacion`. Idempotente. No cambia la época.
+      responses:
+        '200':
+          description: Reloj en pausa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hora'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '409':
+          $ref: '#/components/responses/NoEsVirtual'
+  /v1/reloj/reanudacion:
+    post:
+      tags: [control]
+      summary: Reanudar el reloj virtual
+      operationId: reanudarReloj
+      description: |
+        Permiso `simulacion`. Idempotente. El reloj sigue desde la hora en que
+        se pausó: el tiempo real transcurrido en pausa no cuenta.
+      responses:
+        '200':
+          description: Reloj corriendo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hora'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '409':
+          $ref: '#/components/responses/NoEsVirtual'
+  /v1/reloj/confirmaciones:
+    post:
+      tags: [control]
+      summary: Confirmar que un participante terminó una hora
+      operationId: confirmarHora
+      description: |
+        Permiso `procesos_programados`. Confirmar `t` implica todas las horas
+        anteriores. Repetir una confirmación o confirmar una hora ya superada no
+        tiene efecto y responde 200. En modo `REAL` se acepta y se ignora, para
+        que los participantes no necesiten saber en qué modo están.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Confirmacion'
+            example:
+              participante: simulador
+              hora: '2022-03-01T07:00:00Z'
+      responses:
+        '200':
+          description: Confirmación registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hora'
+        '400':
+          description: |
+            `HORA_NO_ALINEADA` o `PARTICIPANTE_DESCONOCIDO`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+        '401':
+          $ref: '#/components/responses/NoAutenticado'
+        '403':
+          $ref: '#/components/responses/SinPermiso'
+        '409':
+          description: '`HORA_FUTURA`: la hora confirmada es posterior a `ahora`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
+components:
+  securitySchemes:
+    tokenPortador:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token RS256 emitido por `POST /v1/sesiones` del servicio de ingesta.
+  responses:
+    SolicitudInvalida:
+      description: La solicitud no cumple el contrato
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    NoAutenticado:
+      description: Falta el token, está vencido o su firma no es válida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    SinPermiso:
+      description: El token no incluye el permiso requerido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+    NoEsVirtual:
+      description: '`RELOJ_EN_MODO_REAL`: la operación solo aplica en modo virtual.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problema'
+  schemas:
+    Salud:
+      type: object
+      required: [estado]
+      properties:
+        estado:
+          type: string
+          enum: [ok]
+        servicio:
+          type: string
+        version:
+          type: string
+        base:
+          type: string
+          enum: [ok]
+          description: Solo aparece con `profundo=true`.
+    Hora:
+      type: object
+      required: [ahora, modo, estado, velocidad, epoca, escenario_id, barrera, fin, retenido_por, confirmadas]
+      properties:
+        ahora:
+          type: string
+          format: date-time
+          description: Hora de dominio en UTC.
+        modo:
+          type: string
+          enum: [REAL, VIRTUAL]
+        estado:
+          type: string
+          enum: [CORRIENDO, PAUSADO, RETENIDO, FINALIZADO]
+          description: |
+            `RETENIDO`: detenido en la barrera a la espera de confirmaciones.
+            `FINALIZADO`: llegó a `fin` y se queda ahí. En modo `REAL` siempre
+            es `CORRIENDO`.
+        velocidad:
+          type: number
+          exclusiveMinimum: 0
+          description: Segundos virtuales por segundo real. En modo `REAL` vale 1.
+        epoca:
+          type: integer
+          minimum: 1
+        escenario_id:
+          type: [integer, 'null']
+        barrera:
+          type: [string, 'null']
+          format: date-time
+        fin:
+          type: [string, 'null']
+          format: date-time
+        retenido_por:
+          type: array
+          description: Participantes cuya confirmación falta cuando el estado es `RETENIDO`.
+          items:
+            type: string
+        confirmadas:
+          type: array
+          description: |
+            Última hora confirmada por cada participante, en el orden de la
+            lista `participantes`. Vacía en modo `REAL`.
+          items:
+            type: object
+            required: [participante, hora]
+            properties:
+              participante:
+                type: string
+              hora:
+                type: string
+                format: date-time
+    ConfiguracionReloj:
+      oneOf:
+        - $ref: '#/components/schemas/ConfiguracionReal'
+        - $ref: '#/components/schemas/ConfiguracionVirtual'
+      discriminator:
+        propertyName: modo
+        mapping:
+          REAL: '#/components/schemas/ConfiguracionReal'
+          VIRTUAL: '#/components/schemas/ConfiguracionVirtual'
+    ConfiguracionReal:
+      type: object
+      additionalProperties: false
+      required: [modo]
+      properties:
+        modo:
+          type: string
+          const: REAL
+    ConfiguracionVirtual:
+      type: object
+      additionalProperties: false
+      required: [modo, escenario_id, inicio, fin, velocidad, participantes]
+      properties:
+        modo:
+          type: string
+          const: VIRTUAL
+        escenario_id:
+          type: integer
+        inicio:
+          type: string
+          format: date-time
+          description: Hora en punto, con desplazamiento explícito.
+        fin:
+          type: string
+          format: date-time
+          description: Hora en punto, posterior a `inicio`.
+        velocidad:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 999999.99
+        participantes:
+          type: array
+          description: |
+            El orden importa: es el orden en que trabajan dentro de cada hora
+            (ver `turno_de` en `GET /v1/hora`).
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [simulador, planificador]
+        pausado:
+          type: boolean
+          default: false
+    Confirmacion:
+      type: object
+      additionalProperties: false
+      required: [participante, hora]
+      properties:
+        participante:
+          type: string
+          enum: [simulador, planificador]
+        hora:
+          type: string
+          format: date-time
+          description: Hora en punto ya alcanzada por el reloj.
+    Problema:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        codigo:
+          type: string
+          description: Código estable en mayúsculas, pensado para programas.
+        mensaje:
+          type: string
+          description: Texto en español, pensado para personas.
+        errores:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDeCampo'
+    ErrorDeCampo:
+      type: object
+      required: [codigo, mensaje]
+      properties:
+        indice:
+          type: [integer, 'null']
+          description: Posición del elemento dentro de la lista enviada, si aplica.
+        campo:
+          type: [string, 'null']
+        codigo:
+          type: string
+        mensaje:
+          type: string

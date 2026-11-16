@@ -1,0 +1,38 @@
+# Prueba de humo contra las URL públicas (ADR-0003). Manual y diaria.
+# Las URL van en variables del repositorio (no son secretas):
+#   SVCA_NUBE_URL_NUCLEO, SVCA_NUBE_URL_PRONOSTICO, SVCA_NUBE_URL_SIMULADOR, SVCA_NUBE_URL_WEB
+name: Humo en la nube
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 11 * * *"  # 06:17 en Colombia; la hora exacta no importa
+
+permissions:
+  contents: read
+
+jobs:
+  humo:
+    runs-on: ubuntu-latest
+    env:
+      SVCA_HUMO_URL_NUCLEO: ${{ vars.SVCA_NUBE_URL_NUCLEO }}
+      SVCA_HUMO_URL_PRONOSTICO: ${{ vars.SVCA_NUBE_URL_PRONOSTICO }}
+      SVCA_HUMO_URL_SIMULADOR: ${{ vars.SVCA_NUBE_URL_SIMULADOR }}
+      SVCA_HUMO_URL_WEB: ${{ vars.SVCA_NUBE_URL_WEB }}
+      SVCA_HUMO_ESPERA_S: "180"  # hasta tres minutos por arranque en frío
+    steps:
+      - name: Sin URL configuradas
+        if: env.SVCA_HUMO_URL_NUCLEO == ''
+        run: echo "Faltan las variables SVCA_NUBE_URL_*; se omite."
+      - uses: actions/checkout@v4
+        if: env.SVCA_HUMO_URL_NUCLEO != ''
+      - uses: astral-sh/setup-uv@v6
+        if: env.SVCA_HUMO_URL_NUCLEO != ''
+        with:
+          version: "0.12.17"
+          enable-cache: true
+      - name: Pruebas de humo contra la nube
+        if: env.SVCA_HUMO_URL_NUCLEO != ''
+        run: |
+          uv sync --frozen
+          uv run pytest -m humo -v

@@ -15,6 +15,7 @@ Genera (y sobrescribe):
 
 Requiere: pandoc y python-docx.
 """
+
 import html
 import re
 import shutil
@@ -52,8 +53,10 @@ def clean_cell(c):
 
 
 def html_table_to_pipe(block):
-    rows = [[clean_cell(c) for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, re.S)]
-            for r in re.findall(r"<tr[^>]*>(.*?)</tr>", block, re.S)]
+    rows = [
+        [clean_cell(c) for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, re.S)]
+        for r in re.findall(r"<tr[^>]*>(.*?)</tr>", block, re.S)
+    ]
     rows = [r for r in rows if r]
     if not rows:
         return block
@@ -84,8 +87,19 @@ def main(docx_path):
     sql_files = extract_sql(docx_path)
 
     tmp = Path(tempfile.mkdtemp())
-    subprocess.run(["pandoc", str(docx_path), "-t", "gfm", "--wrap=none",
-                    f"--extract-media={tmp}", "-o", str(tmp / "t.md")], check=True)
+    subprocess.run(
+        [
+            "pandoc",
+            str(docx_path),
+            "-t",
+            "gfm",
+            "--wrap=none",
+            f"--extract-media={tmp}",
+            "-o",
+            str(tmp / "t.md"),
+        ],
+        check=True,
+    )
     text = (tmp / "t.md").read_text(encoding="utf-8")
 
     text = re.sub(r'<span id="[^"]*" class="anchor"></span>', "", text)
@@ -97,6 +111,7 @@ def main(docx_path):
         if sql:
             return f"> Script completo en [`{sql.group(1)}`](../../{sql.group(1)})."
         return html_table_to_pipe(block)
+
     text = re.sub(r"<table>.*?</table>", table_sub, text, flags=re.S)
 
     # Figuras: renombrar con número y título del pie de figura que las precede.
@@ -142,7 +157,7 @@ def main(docx_path):
             if level == 1 or (num and split_level(num) == level and level > 1):
                 chunks.append(cur)
                 if num:
-                    key = num.replace(".", "-") + "_" + slug(title[len(num):])
+                    key = num.replace(".", "-") + "_" + slug(title[len(num) :])
                     key = ("0" + key) if num.split(".")[0].isdigit() and len(num.split(".")[0]) == 1 else key
                 elif title.lower().startswith("capítulo v"):
                     key = "05_referencias"
@@ -164,13 +179,21 @@ def main(docx_path):
         if not body:
             continue
         fname = ch["key"] + ".md"
-        header = (f"<!-- Generado por tools/docx_a_conocimiento.py desde el .docx. "
-                  f"No editar a mano: editar el Word y regenerar. -->\n\n")
+        header = (
+            "<!-- Generado por tools/docx_a_conocimiento.py desde el .docx. "
+            "No editar a mano: editar el Word y regenerar. -->\n\n"
+        )
         (TESIS / fname).write_text(header + body + "\n", encoding="utf-8")
-        codes = sorted({c for l in ch["lines"] if l.startswith("|") for c in CODE_CELL.findall(l)},
-                       key=lambda c: (c.split("-")[0], int(c.split("-")[1])))
-        tablas = [f"T{c.group(2)}" for l in ch["lines"] if (c := CAPTION.search(l)) and c.group(1) == "Tabla"]
-        figs = [f"F{c.group(2)}" for l in ch["lines"] if (c := CAPTION.search(l)) and c.group(1) == "Figura"]
+        codes = sorted(
+            {c for ln in ch["lines"] if ln.startswith("|") for c in CODE_CELL.findall(ln)},
+            key=lambda c: (c.split("-")[0], int(c.split("-")[1])),
+        )
+        tablas = [
+            f"T{c.group(2)}" for ln in ch["lines"] if (c := CAPTION.search(ln)) and c.group(1) == "Tabla"
+        ]
+        figs = [
+            f"F{c.group(2)}" for ln in ch["lines"] if (c := CAPTION.search(ln)) and c.group(1) == "Figura"
+        ]
         index.append((fname, ch["title"], len(body) // 4, codes, tablas, figs))
 
     write_mapa(index, figuras, sql_files, docx_path)
@@ -195,29 +218,45 @@ def compress(codes):
 
 def write_mapa(index, figuras, sql_files, docx_path):
     rel = docx_path.relative_to(ROOT) if docx_path.is_relative_to(ROOT) else docx_path.name
-    L = ["# Mapa del conocimiento del proyecto",
-         "",
-         "<!-- Generado por tools/docx_a_conocimiento.py. No editar a mano. -->",
-         "",
-         f"Fuente: `{rel}`. Lee este mapa primero y abre solo el archivo de la sección que necesitas.",
-         "Tokens ≈ caracteres/4. La trazabilidad RF → servicio → carpeta → sprint está en `docs/TRAZABILIDAD.md`.",
-         "",
-         "## Secciones del documento",
-         "",
-         "| Archivo | Sección | ~Tokens | Códigos en tablas | Tablas | Figuras |",
-         "|---|---|---|---|---|---|"]
+    lineas = [
+        "# Mapa del conocimiento del proyecto",
+        "",
+        "<!-- Generado por tools/docx_a_conocimiento.py. No editar a mano. -->",
+        "",
+        f"Fuente: `{rel}`. Lee este mapa primero y abre solo el archivo de la sección que necesitas.",
+        "Tokens ≈ caracteres/4. La trazabilidad RF → servicio → carpeta → sprint está en `docs/TRAZABILIDAD.md`.",
+        "",
+        "## Secciones del documento",
+        "",
+        "| Archivo | Sección | ~Tokens | Códigos en tablas | Tablas | Figuras |",
+        "|---|---|---|---|---|---|",
+    ]
     for fname, title, tok, codes, tablas, figs in index:
-        L.append(f"| `docs/tesis/{fname}` | {title} | {tok:,} | {compress(codes)} | "
-                 f"{', '.join(tablas)} | {', '.join(figs)} |")
+        lineas.append(
+            f"| `docs/tesis/{fname}` | {title} | {tok:,} | {compress(codes)} | "
+            f"{', '.join(tablas)} | {', '.join(figs)} |"
+        )
     total = sum(i[2] for i in index)
-    L += ["", f"Total ≈ {total:,} tokens. Ninguna tarea debería necesitar más de 2 o 3 secciones.",
-          "", "## Figuras (`docs/diagramas/`)", "", "| N.º | Título | Archivo |", "|---|---|---|"]
+    lineas += [
+        "",
+        f"Total ≈ {total:,} tokens. Ninguna tarea debería necesitar más de 2 o 3 secciones.",
+        "",
+        "## Figuras (`docs/diagramas/`)",
+        "",
+        "| N.º | Título | Archivo |",
+        "|---|---|---|",
+    ]
     for n, t, f in figuras:
-        L.append(f"| {n} | {t} | `{f}` |")
-    L += ["", "## Scripts de base de datos (`db/`)", "",
-          "Se ejecutan en orden numérico sobre PostgreSQL 16 (esquema `svca`).", ""]
-    L += [f"- `{s}`" for s in sql_files]
-    (ROOT / "docs" / "MAPA.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+        lineas.append(f"| {n} | {t} | `{f}` |")
+    lineas += [
+        "",
+        "## Scripts de base de datos (`db/`)",
+        "",
+        "Se ejecutan en orden numérico sobre PostgreSQL 16 (esquema `svca`).",
+        "",
+    ]
+    lineas += [f"- `{s}`" for s in sql_files]
+    (ROOT / "docs" / "MAPA.md").write_text("\n".join(lineas) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

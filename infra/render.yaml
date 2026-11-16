@@ -1,0 +1,112 @@
+# Blueprint de Render (ADR-0003). Describe el mismo sistema que infra/docker-compose.yml,
+# con las mismas imágenes; no es un segundo archivo de orquestación (RNF-20).
+#
+# Al crear el Blueprint en Render, indicar la ruta infra/render.yaml (Render permite cambiarla;
+# si no lo permitiera, mover este archivo a la raíz y anotarlo en docs/ESTADO.md).
+# Campos verificados en https://render.com/docs/blueprint-spec el 2026-11-15, salvo los
+# marcados "a verificar", cuyos nombres no se pudieron leer en la página.
+#
+# Valores con `sync: false`: secretos o URL que solo existen tras crear los servicios. Render
+# los pide al crear el Blueprint y no los vuelve a tocar. Nunca se escriben aquí.
+# Ningún servicio usa rootDir: así dockerfilePath, dockerContext y staticPublishPath son
+# relativos a la raíz del repositorio sin ambigüedad.
+
+services:
+  - type: web
+    name: svca-nucleo
+    runtime: docker
+    plan: free
+    region: virginia          # misma región que Neon (aws-us-east-1)
+    dockerfilePath: ./infra/docker/nucleo.Dockerfile
+    dockerContext: .
+    healthCheckPath: /salud   # sin ?profundo: la comprobación del proveedor no despierta la base
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - servicios/**
+        - simulador/reloj/**
+        - db/**
+        - tools/db_aplicar.py
+        - pyproject.toml
+        - uv.lock
+        - infra/docker/nucleo.Dockerfile
+    envVars:
+      - key: SVCA_DB_URL           # cadena de Neon con agrupador y sslmode=verify-full
+        sync: false
+      - key: SVCA_ORIGENES         # URL del sitio estático svca-web
+        sync: false
+      - key: SVCA_CORREO_REDIRIGIR_A   # buzón único de prueba (Sprint 5)
+        sync: false
+
+  - type: web
+    name: svca-pronostico
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./infra/docker/pronostico.Dockerfile
+    dockerContext: .
+    healthCheckPath: /v1/salud
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - servicios/comun/**
+        - servicios/pronostico/**
+        - pyproject.toml
+        - uv.lock
+        - infra/docker/pronostico.Dockerfile
+    envVars:
+      - key: SVCA_DB_URL
+        sync: false
+      - key: SVCA_ORIGENES
+        sync: false
+
+  - type: web
+    name: svca-simulador
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./infra/docker/simulador.Dockerfile
+    dockerContext: .
+    healthCheckPath: /v1/salud
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - servicios/comun/**
+        - simulador/estaciones/**
+        - pyproject.toml
+        - uv.lock
+        - infra/docker/simulador.Dockerfile
+    envVars:
+      - key: SVCA_DB_URL
+        sync: false
+      - key: SVCA_ORIGENES
+        sync: false
+      - key: SVCA_URL_NUCLEO           # https://svca-nucleo.onrender.com
+        sync: false
+      - key: SIM_MANTENER_DESPIERTOS   # salud pública propia y de pronóstico (Sprint 1)
+        sync: false
+
+  - type: web
+    name: svca-web
+    runtime: static
+    buildCommand: cd web && npm ci --no-audit --no-fund && npm run build
+    staticPublishPath: ./web/dist
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - web/**
+    # Aplicación de página única: toda ruta devuelve index.html. (Nombres de campos: a verificar.)
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Vite las incrusta al construir. (Que estén disponibles en la construcción: a verificar.)
+      - key: VITE_URL_NUCLEO
+        sync: false
+      - key: VITE_URL_PRONOSTICO
+        sync: false
+      - key: VITE_URL_SIMULADOR
+        sync: false
+      - key: NODE_VERSION
+        value: "22"
