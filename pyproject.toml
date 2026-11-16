@@ -94,6 +94,8 @@ warn_unreachable = true
 explicit_package_bases = true
 mypy_path = "servicios/comun:servicios/ingesta:servicios/normativo:servicios/notificaciones:servicios/planificador:servicios/pronostico:servicios/nucleo:simulador/reloj:simulador/estaciones"
 files = [
+    "servicios/comun/svca_comun",
+    "servicios/nucleo/svca_nucleo",
     "servicios/*/svca_*/domain",
     "servicios/*/svca_*/application",
     "simulador/*/svca_*/domain",
@@ -104,6 +106,10 @@ files = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--strict-markers -ra --import-mode=importlib"
+filterwarnings = [
+    # Starlette recomienda httpx2 para TestClient; se revisa al actualizar dependencias.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 markers = [
     "unitaria: sin red ni base de datos",
     "integracion: necesita PostgreSQL 16 (SVCA_PRUEBAS_DB_URL)",

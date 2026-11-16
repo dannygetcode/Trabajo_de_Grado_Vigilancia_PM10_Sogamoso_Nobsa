@@ -53,8 +53,18 @@ paths:
     get:
       tags: [hora]
       summary: Comprobación de vida
+      description: >-
+        Sin parámetros no toca la base de datos, para no despertar la base gratuita (ADR-0003).
+        Con `profundo=true` comprueba además la conexión a la base con `SELECT 1`.
       operationId: salud
       security: []
+      parameters:
+        - name: profundo
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: El servicio responde
@@ -62,6 +72,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Salud'
+        '503':
+          description: '`BASE_NO_DISPONIBLE`: se pidió `profundo=true` y la base de datos no respondió o no está configurada.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problema'
   /v1/hora:
     get:
       tags: [hora]
@@ -313,6 +329,14 @@ components:
         estado:
           type: string
           enum: [ok]
+        servicio:
+          type: string
+        version:
+          type: string
+        base:
+          type: string
+          enum: [ok]
+          description: Solo aparece con `profundo=true`.
     Hora:
       type: object
       required: [ahora, modo, estado, velocidad, epoca, escenario_id, barrera, fin, retenido_por, confirmadas]
