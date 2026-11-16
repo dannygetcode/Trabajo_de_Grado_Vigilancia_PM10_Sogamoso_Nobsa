@@ -67,6 +67,6 @@ El rol `SIMULADOR` no existe en `db/10`. Se agrega en `db/11_roles_servicios.sql
 
 ## Puntos abiertos
 
-1. **Decimales del histórico.** `valor_crudo` es `NUMERIC(10,3)`. Si el perfil de los datos IDEAM muestra valores con más de tres decimales, hay que ampliar la columna (desviación del documento) en lugar de redondear en el simulador: redondear es modificar el dato crudo.
-2. **Zona horaria del histórico.** Los archivos del IDEAM vienen en hora local. El simulador convierte a UTC al leer (Colombia es UTC-5 todo el año). Hay que confirmarlo en el perfil de datos.
+1. ~~**Decimales del histórico.**~~ Cerrado: el perfil (`docs/datos/perfil_calidad.md`) muestra como máximo dos decimales; `NUMERIC(10,3)` alcanza y no se amplía la columna.
+2. **Zona horaria del histórico.** Suposición, no confirmada: hora legal de Colombia (UTC-5). La conversión a UTC la hace `tools/perfil_datos.py` al normalizar, no el simulador; el simulador lee `inicio` ya en UTC. El perfil muestra que los ciclos diarios no encajan limpio ni con hora local ni con UTC y que BOMBEROS y SENA van una hora detrás de las demás estaciones (secciones 7 y 9 del perfil). No afecta a los contratos.
 3. **Reloj tras finalizar un escenario.** Queda congelado en la última hora hasta que alguien lo pase a `REAL`. Si el servicio de reloj se reinicia en ese estado, arranca en `REAL`.

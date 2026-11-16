@@ -22,6 +22,7 @@ Entregable según la Tabla 5: perfil de calidad de los datos, backlog priorizado
 - [x] Plan `docs/planes/reloj-virtual.md`: máquina de estados del reloj, barrera, bucle de reproducción, recuperación ante caídas y planificador (HU-01 a HU-03, HU-12 a HU-14, HU-16).
 - [x] Plan `docs/planes/autenticacion.md`: llaves, token, inicio de sesión con bloqueo, cuentas de servicio, formato de errores (HU-04, HU-05).
 - [x] `.gitignore` excluye `infra/secretos/` y `*.pem`.
+- [x] Perfil de calidad de los datos (`docs/datos/perfil_calidad.md`, generado por `tools/perfil_datos.py`) y archivos normalizados en `data/processed/` (`historico_normalizado.csv`: PM10 y PM2.5, 257.845 filas, lo que reproduce el simulador; `meteorologia_normalizada.csv`: 1.323.880 filas, para el Sprint 4). Sin duplicados, máximo dos decimales, 8.529 valores con separador de miles (CO y RUVb) que el normalizador limpia sin cambiar dígitos. Completitud de PM10 entre 53 % y 95 % por estación y año.
 
 ### Siguiente
 - [ ] (Autor) Revisar los tres ADR y las interpretaciones del final de `docs/backlog.md`; validar las prioridades con la asesora. En especial ADR-0001: se aparta de la Figura 43 (correcciones 1 a 5 de `docs/correcciones_documento.md`).
@@ -29,14 +30,15 @@ Entregable según la Tabla 5: perfil de calidad de los datos, backlog priorizado
 - [ ] (Autor) Aplicar al Word las correcciones de prioridad A y regenerar `docs/tesis/`.
 - [ ] Crear los Issues en GitHub a partir de `docs/backlog.md`. No se hizo: `gh` no está instalado en este equipo. Con `gh` instalado y autenticado se generan desde el backlog (un Issue por historia, etiqueta por sprint).
 - [ ] (Opus) Ejecutar `docs/planes/sprint-0-construccion.md`, tareas 1 a 10 en orden.
-- [ ] (Opus) Perfil de calidad de los datos: completitud de PM10 por estación y año, duplicados, horas faltantes. Leer el CSV con un script; nunca abrirlo ni pegarlo en el chat. Además debe responder dos preguntas de `docs/api/README.md` (cuántos decimales traen los valores y en qué zona horaria vienen las fechas) y producir el archivo histórico normalizado que lee el simulador (`docs/planes/reloj-virtual.md`, sección 4.1).
 - [ ] (Opus) Sprint 1: HU-01 a HU-15 y HU-60 según `docs/backlog.md`, `docs/api/` y los dos planes. Orden: sección 8 de `reloj-virtual.md` y sección 9 de `autenticacion.md`; la protección de rutas va antes que cualquier ruta de negocio.
 - [ ] (Fable) Revisar el esqueleto del Sprint 0 (`svca_nucleo`, contratos de import-linter, `render.yaml`) y el diff de HU-03, HU-04, HU-13 y HU-60 cuando Opus las termine.
 - [ ] (Fable) Antes del Sprint 2: `docs/planes/validacion.md` (umbrales de las reglas, HU-18) y los contratos de revisión, configuración y disparos del planificador.
 
 ## Decisiones abiertas
 - Algoritmo del modelo y método del intervalo de predicción (Sprint 4, `docs/planes/pronostico.md`).
-- Umbrales de las reglas de cambio brusco y comparación entre estaciones (Sprint 2, `docs/planes/validacion.md`).
+- Umbrales de las reglas de cambio brusco y comparación entre estaciones (Sprint 2, `docs/planes/validacion.md`). Insumos en el perfil: cuantiles del cambio hora a hora (p99 entre 22 y 46 µg/m³ según la estación) y desfase de una hora entre estaciones.
+- **Cómo demostrar una declaratoria** (Sprint 3, `docs/planes/normativo.md`). El perfil muestra que ningún promedio de 24 h de PM10 llega a 155 µg/m³ en 2020-2024 (máximo 91,9 en SENA): reproducir los históricos nunca genera una propuesta. Opciones: falla nueva del simulador que escale un periodo, o parámetros normativos de demostración con vigencia propia.
+- **Zona horaria de los datos IDEAM.** Se supone UTC-5; los ciclos diarios no lo confirman. BOMBEROS y SENA van una hora detrás de las demás; UPTC varía por año. No se corrige en el normalizador. Afecta a HU-18 (comparación entre estaciones) y a las variables horarias del modelo (Sprint 4).
 
 ## Decisiones tomadas que no están en el documento
 - **Dónde viven CU-13, CU-14 y CU-15.** La Figura 42 no les dibuja interfaz. El inicio de sesión y la administración de usuarios y de la red van en el servicio de ingesta; el control de escenarios, en una API propia del simulador (ADR-0002).
@@ -68,3 +70,4 @@ Entregable según la Tabla 5: perfil de calidad de los datos, backlog priorizado
 - La Figura 10 deja sin definir el estado de un pronóstico con 18 a 23 horas observadas.
 - CU-04 permite al coordinador consultar el estado de la red, pero los datos iniciales (`db/10`) no le dan el permiso `consultar_red`.
 - La Figura 17 no dice cómo se declara detectada una falla de ausencia de dato, que no deja mediciones marcadas.
+- Datos: del 2021-08-31 al 2021-11-30 no hay PM10 en ninguna estación (91 días) y faltan meses completos en varias (perfil, sección 5). La partición 2020-2022 / 2023 / 2024 de HU-38 debe tenerlo en cuenta. El README del repositorio aún dice 2022-2024 (corrección 28).
