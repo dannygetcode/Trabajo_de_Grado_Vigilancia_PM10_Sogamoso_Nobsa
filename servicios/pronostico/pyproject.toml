@@ -1,0 +1,23 @@
+[project]
+name = "svca-pronostico"
+version = "0.1.0"
+description = "Servicio de pronóstico de PM10."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "svca-comun",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
+    "uvicorn>=0.32",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "svca_pronostico"
+module-root = ""
+
+[tool.uv.sources]
+svca-comun = { workspace = true }

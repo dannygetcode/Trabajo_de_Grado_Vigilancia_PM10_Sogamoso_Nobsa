@@ -1,0 +1,58 @@
+[project]
+name = "svca"
+version = "0.1.0"
+description = "Vigilancia de la calidad del aire y pronóstico de PM10 en el corredor Sogamoso-Nobsa"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "svca-comun",
+    "svca-reloj",
+    "svca-ingesta",
+    "svca-normativo",
+    "svca-notificaciones",
+    "svca-planificador",
+    "svca-pronostico",
+    "svca-simulador",
+    "svca-nucleo",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "anyio>=4.6",
+    "hypothesis>=6.120",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",
+    "openapi-spec-validator>=0.7",
+    "pyyaml>=6.0",
+    "types-pyyaml>=6.0",
+    "uvicorn>=0.32",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+    "servicios/comun",
+    "simulador/reloj",
+    "servicios/ingesta",
+    "servicios/normativo",
+    "servicios/notificaciones",
+    "servicios/planificador",
+    "servicios/pronostico",
+    "simulador/estaciones",
+    "servicios/nucleo",
+]
+
+[tool.uv.sources]
+svca-comun = { workspace = true }
+svca-reloj = { workspace = true }
+svca-ingesta = { workspace = true }
+svca-normativo = { workspace = true }
+svca-notificaciones = { workspace = true }
+svca-planificador = { workspace = true }
+svca-pronostico = { workspace = true }
+svca-simulador = { workspace = true }
+svca-nucleo = { workspace = true }

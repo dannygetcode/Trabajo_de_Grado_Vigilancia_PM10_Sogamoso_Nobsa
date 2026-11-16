@@ -29,7 +29,17 @@ Entregable según la Tabla 5: perfil de calidad de los datos, backlog priorizado
 - [ ] (Autor) Crear las cuentas de Neon, Render y Brevo siguiendo `docs/manuales/despliegue.md` (lo escribe la tarea 9 del plan del Sprint 0). Comprobar que ninguna pide tarjeta y que los límites coinciden con ADR-0003.
 - [ ] (Autor) Aplicar al Word las correcciones de prioridad A y regenerar `docs/tesis/`.
 - [ ] Crear los Issues en GitHub a partir de `docs/backlog.md`. No se hizo: `gh` no está instalado en este equipo. Con `gh` instalado y autenticado se generan desde el backlog (un Issue por historia, etiqueta por sprint).
-- [ ] (Opus) Ejecutar `docs/planes/sprint-0-construccion.md`, tareas 1 a 10 en orden.
+- [ ] (Opus) Ejecutar `docs/planes/sprint-0-construccion.md` en la rama `sprint-0/estructura`:
+  - [x] 1. Árbol y workspace de uv: nueve paquetes (`svca-comun`, `-reloj`, `-ingesta`, `-normativo`, `-notificaciones`, `-planificador`, `-pronostico`, `-simulador`, `-nucleo`), backend `uv_build`, `uv.lock` en la raíz, `.python-version` 3.13 y `.gitattributes` con fin de línea LF.
+  - [ ] 2. Calidad: ruff, mypy, import-linter, pytest; README reescrito.
+  - [ ] 3. `tools/db_aplicar.py`.
+  - [ ] 4. `svca_comun` mínimo y una aplicación por servicio.
+  - [ ] 5. Imágenes.
+  - [ ] 6. Web mínima.
+  - [ ] 7. `infra/docker-compose.yml`.
+  - [ ] 8. CI.
+  - [ ] 9. Esqueleto en la nube.
+  - [ ] 10. Cierre.
 - [ ] (Opus) Sprint 1: HU-01 a HU-15 y HU-60 según `docs/backlog.md`, `docs/api/` y los dos planes. Orden: sección 8 de `reloj-virtual.md` y sección 9 de `autenticacion.md`; la protección de rutas va antes que cualquier ruta de negocio.
 - [ ] (Fable) Revisar el esqueleto del Sprint 0 (`svca_nucleo`, contratos de import-linter, `render.yaml`) y el diff de HU-03, HU-04, HU-13 y HU-60 cuando Opus las termine.
 - [ ] (Fable) Antes del Sprint 2: `docs/planes/validacion.md` (umbrales de las reglas, HU-18) y los contratos de revisión, configuración y disparos del planificador.

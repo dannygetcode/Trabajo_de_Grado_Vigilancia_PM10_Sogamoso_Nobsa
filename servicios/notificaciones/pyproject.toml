@@ -1,0 +1,22 @@
+[project]
+name = "svca-notificaciones"
+version = "0.1.0"
+description = "Servicio de notificaciones e informes en PDF."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "svca-comun",
+    "weasyprint>=63",
+    "matplotlib>=3.9",
+    "jinja2>=3.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "svca_notificaciones"
+module-root = ""
+
+[tool.uv.sources]
+svca-comun = { workspace = true }
