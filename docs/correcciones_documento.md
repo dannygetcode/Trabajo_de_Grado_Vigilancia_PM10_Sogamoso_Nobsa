@@ -50,7 +50,7 @@ Prioridad: **A** contradice una decisión tomada y el jurado lo vería; **B** va
 | 25 | Numeración de capítulos | El documento salta del Capítulo III al V | Falta el Capítulo IV o hay que renumerar | A |
 | 26 | Tabla 5 y 3.2.1 | Aclarar que son un sprint de preparación (0) y seis de construcción; en el Sprint 0, añadir al entregable "decisiones de arquitectura registradas y esqueleto desplegado"; en el Sprint 6, "despliegue en la nube" → "despliegue verificado y endurecido" | El despliegue empieza en el Sprint 0 | B |
 | 27 | 3.2.1 | Mencionar que las decisiones de arquitectura se registran como ADR en `docs/adr/` | Artefacto que el jurado puede revisar y que el texto no menciona | C |
-| 28 | `README.md` del repositorio (no es el Word) | Está desactualizado: habla de datos 2022 a 2024, PostGIS, carpetas `backend/` y `frontend/` y un diagrama que ya no corresponde | Lo primero que abre el jurado en el repositorio contradice al documento. Se reescribe en la tarea 2 del plan del Sprint 0 | A |
+| 28 | `README.md` del repositorio (no es el Word) | Está desactualizado: habla de datos 2022 a 2024, PostGIS, carpetas `backend/` y `frontend/` y un diagrama que ya no corresponde | Lo primero que abre el jurado en el repositorio contradice al documento. **Hecho en S0-2.** | — |
 
 ## Qué no cambia
 
